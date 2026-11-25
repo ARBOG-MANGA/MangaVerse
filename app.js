@@ -12,14 +12,27 @@ $(document).ready(function () {
     slow: 950,
   };
 
+  // Detect optimal spread mode based on device viewport & orientation
+  function getRecommendedDisplay() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const isPortrait = h > w;
+    // Mobile (< 768px) or Portrait Tablet (< 1024px in portrait) -> single page
+    if (w < 768 || (w < 1024 && isPortrait)) {
+      return "single";
+    }
+    return "double";
+  }
+
   const state = {
     bookId: null,
     bookTitle: "Sample Volume",
-    pages: [], // Active object URLs or Data URLs
+    pages: [],
     currentPage: 1,
     mode: "flip", // 'flip' | 'webtoon' | 'horizontal'
     direction: "rtl", // 'rtl' (Manga) | 'ltr'
-    display: window.innerWidth < 768 ? "single" : "double",
+    display: getRecommendedDisplay(),
+    userOverrodeSpread: false, // Tracks if user manually clicked Single/Double
     turnStyle: "smooth",
     zoom: 1,
     panX: 0,
@@ -27,13 +40,13 @@ $(document).ready(function () {
     isDragging: false,
     startX: 0,
     startY: 0,
-    isRapidFlipping: false,
     library: [],
   };
 
   let db = null;
+  const viewportEl = document.getElementById("viewport");
 
-  // --- INDEXEDDB LAYER (Persistent Manga Shelf) ---
+  // --- INDEXEDDB LAYER ---
   function openDB() {
     return new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -97,7 +110,9 @@ $(document).ready(function () {
   // --- DASHBOARD RENDERING ---
   async function refreshLibrary(filterText = "") {
     if (!db) return;
-    $("#library-grid img").each(function(){ if(this.src.startsWith("blob:")) URL.revokeObjectURL(this.src); });
+    $("#library-grid img").each(function () {
+      if (this.src.startsWith("blob:")) URL.revokeObjectURL(this.src);
+    });
     state.library = await dbGetAllBooks();
     state.library.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
@@ -187,7 +202,9 @@ $(document).ready(function () {
 
   async function saveCurrentProgress() {
     if (!state.bookId || !db) return;
-    const id = state.bookId, page = state.currentPage, direction = state.direction;
+    const id = state.bookId,
+      page = state.currentPage,
+      direction = state.direction;
     const all = await dbGetAllBooks();
     const book = all.find((b) => b.id === id);
     if (!book) return;
@@ -216,7 +233,7 @@ $(document).ready(function () {
       .replace(/"/g, "&quot;");
   }
 
-  // --- SAMPLE DECK (First-time demo before uploading) ---
+  // --- SAMPLE DECK ---
   function loadSampleDeck() {
     const colors = ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51", "#1d3557"];
     revokeActiveUrls();
@@ -238,69 +255,75 @@ $(document).ready(function () {
   const naturalSort = (a, b) =>
     a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 
-  // --- MULTI-FORMAT UPLOAD & SAVE TO INDEXEDDB ---
+  // --- MULTI-FORMAT UPLOAD ---
   $("#file-upload").on("change", async function (e) {
     const files = Array.from(e.target.files);
     if (!files.length) return;
 
     $("#file-status").text("Extracting & saving...");
     try {
-    files.sort((a, b) => naturalSort(a.name, b.name));
+      files.sort((a, b) => naturalSort(a.name, b.name));
 
-    const pageBlobs = [];
-    let inferredTitle = files[0].name.replace(/\.(cbz|zip|pdf|jpe?g|png|webp|gif|bmp|avif)$/i, "");
+      const pageBlobs = [];
+      let inferredTitle = files[0].name.replace(/\.(cbz|zip|pdf|jpe?g|png|webp|gif|bmp|avif)$/i, "");
 
-    for (const file of files) {
-      const ext = file.name.split(".").pop().toLowerCase();
+      for (const file of files) {
+        const ext = file.name.split(".").pop().toLowerCase();
 
-      if (["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"].includes(ext)) {
-        pageBlobs.push(file);
-      } else if (ext === "cbz" || ext === "zip") {
-        const zip = await JSZip.loadAsync(file);
-        const imgEntries = Object.keys(zip.files)
-          .filter((name) => !zip.files[name].dir && /\.(jpe?g|png|webp|gif|avif)$/i.test(name))
-          .sort(naturalSort);
+        if (["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"].includes(ext)) {
+          pageBlobs.push(file);
+        } else if (ext === "cbz" || ext === "zip") {
+          const zip = await JSZip.loadAsync(file);
+          const imgEntries = Object.keys(zip.files)
+            .filter((name) => !zip.files[name].dir && /\.(jpe?g|png|webp|gif|avif)$/i.test(name))
+            .sort(naturalSort);
 
-        for (const name of imgEntries) {
-          const blob = await zip.files[name].async("blob");
-          pageBlobs.push(blob);
-        }
-      } else if (ext === "pdf") {
-        const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        for (let p = 1; p <= pdf.numPages; p++) {
-          const page = await pdf.getPage(p);
-          const viewport = page.getViewport({ scale: 1.6 });
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-          const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.88));
-          if (blob) pageBlobs.push(blob);
+          for (const name of imgEntries) {
+            const blob = await zip.files[name].async("blob");
+            pageBlobs.push(blob);
+          }
+        } else if (ext === "pdf") {
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          for (let p = 1; p <= pdf.numPages; p++) {
+            const page = await pdf.getPage(p);
+            const viewport = page.getViewport({ scale: 1.6 });
+            const canvas = document.createElement("canvas");
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+            const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.88));
+            if (blob) pageBlobs.push(blob);
+          }
         }
       }
+
+      if (!pageBlobs.length) {
+        $("#file-status").text("No valid images found");
+        return;
+      }
+
+      const id = "manga_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+      const record = {
+        id,
+        title: inferredTitle || "Untitled Manga",
+        coverBlob: pageBlobs[0],
+        pageBlobs,
+        lastPage: 1,
+        direction: state.direction,
+        updatedAt: Date.now(),
+      };
+
+      await dbPutBook(record);
+      await loadBookFromLibrary(id);
+      toggleLibraryDrawer(false);
+    } catch (err) {
+      console.error(err);
+      alert("Import failed: " + err.message);
+      $("#file-status").text("Import failed");
+    } finally {
+      e.target.value = "";
     }
-
-    if (!pageBlobs.length) {
-      $("#file-status").text("No valid images found");
-      return;
-    }
-
-    const id = "manga_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
-    const record = {
-      id,
-      title: inferredTitle || "Untitled Manga",
-      coverBlob: pageBlobs[0],
-      pageBlobs,
-      lastPage: 1,
-      direction: state.direction,
-      updatedAt: Date.now(),
-    };
-
-    await dbPutBook(record);
-    await loadBookFromLibrary(id);
-    toggleLibraryDrawer(false);
-    } catch(err) { console.error(err); alert("Import failed: " + err.message); $("#file-status").text("Import failed"); } finally { e.target.value = ""; }
   });
 
   // --- STACKED PAGE THICKNESS & BOOK RENDERING ---
@@ -343,7 +366,10 @@ $(document).ready(function () {
         .removeClass("hidden")
         .toggleClass("horizontal", state.mode === "horizontal");
       renderScrollReader();
-      requestAnimationFrame(() => { const img = document.querySelector(`#scroll-reader img[data-page="${state.currentPage}"]`); if(img) img.scrollIntoView({block:"start",inline:"start"}); });
+      requestAnimationFrame(() => {
+        const img = document.querySelector(`#scroll-reader img[data-page="${state.currentPage}"]`);
+        if (img) img.scrollIntoView({ block: "start", inline: "start" });
+      });
     }
   }
 
@@ -355,57 +381,60 @@ $(document).ready(function () {
     $wrapper.html('<div id="flipbook" class="flipbook"></div>');
     const $fb = $("#flipbook");
 
-    const orderedPages = state.pages;
-
-    orderedPages.forEach((src, idx) => {
-      const realPageNum =
-        idx + 1;
-
-      // Mark first and last sheets as stiff cover/card stock
+    state.pages.forEach((src, idx) => {
+      const realPageNum = idx + 1;
       const isFirst = idx === 0;
-      const isLast = idx === orderedPages.length - 1;
+      const isLast = idx === state.pages.length - 1;
       const hardClass = isFirst || isLast ? "hard" : "";
-      const endCardClass = "";
 
       $fb.append(
-        `<div class="page ${hardClass} ${endCardClass}" data-real-page="${realPageNum}">
+        `<div class="page ${hardClass}" data-real-page="${realPageNum}">
           <img src="${src}" alt="Page ${realPageNum}" />
         </div>`
       );
     });
 
     const dims = calculateBookDimensions();
-    const startTurnPage =
-      state.currentPage;
+    // Lock exact stage dimensions so it never shifts during page flips
+    $("#book-stage").css({ width: dims.width, height: dims.height });
 
     $fb.turn({
       width: dims.width,
       height: dims.height,
       display: state.display,
       direction: state.direction,
-      autoCenter: true,
+      autoCenter: false, // FIXED: Prevents turn.js from shifting marginLeft on cover turns
       gradients: true,
       acceleration: true,
       duration: TURN_DURATIONS[state.turnStyle] || 650,
-      page: startTurnPage,
+      page: state.currentPage,
       when: {
+        turning: function () {
+          // Ensure book stays locked at marginLeft: 0 during turn
+          $(this).css("margin-left", "0px");
+        },
         turned: function (e, page) {
-          const realPage =
-            page;
-          state.currentPage = realPage;
-          $("#page-input").val(realPage);
+          $(this).css("margin-left", "0px");
+          state.currentPage = page;
+          $("#page-input").val(page);
           updateStackThickness();
-          highlightThumbnail(realPage);
+          highlightThumbnail(page);
           saveCurrentProgress();
         },
       },
     });
+
+    // Disable corner drag-peeling if currently zoomed in so panning doesn't trigger accidental flips
+    $fb.turn("disable", state.zoom > 1);
   }
 
   function calculateBookDimensions() {
-    const availW = Math.max(100, viewportEl.clientWidth - 28);
-    const availH = Math.max(100, viewportEl.clientHeight - 24);
+    const padW = window.innerWidth < 768 ? 16 : 36;
+    const padH = window.innerWidth < 768 ? 16 : 28;
+    const availW = Math.max(120, viewportEl.clientWidth - padW);
+    const availH = Math.max(120, viewportEl.clientHeight - padH);
     const aspect = 0.7;
+
     let pageH = availH;
     let pageW = pageH * aspect;
 
@@ -419,6 +448,15 @@ $(document).ready(function () {
       width: Math.round(state.display === "double" ? pageW * 2 : pageW),
       height: Math.round(pageH),
     };
+  }
+
+  function resizeBook() {
+    if (state.mode === "flip" && $("#flipbook").turn("is")) {
+      const d = calculateBookDimensions();
+      $("#book-stage").css({ width: d.width, height: d.height });
+      $("#flipbook").turn("size", d.width, d.height).css("margin-left", "0px");
+      applyTransform(); // Re-clamp pan bounds for new size
+    }
   }
 
   function renderScrollReader() {
@@ -461,7 +499,7 @@ $(document).ready(function () {
     }
   }
 
-  function goToPage(targetPage, rapidFlip = true) {
+  function goToPage(targetPage) {
     targetPage = Math.max(1, Math.min(state.pages.length, parseInt(targetPage, 10)));
     if (isNaN(targetPage)) return;
 
@@ -477,38 +515,101 @@ $(document).ready(function () {
     }
 
     const $fb = $("#flipbook");
-    if ($fb.turn("is")) $fb.turn("page", targetPage);
+    if ($fb.turn("is")) {
+      // Temporarily allow programmatic page turn even when zoomed in
+      const wasDisabled = $fb.turn("disabled");
+      if (wasDisabled) $fb.turn("disable", false);
+      $fb.turn("page", targetPage);
+      if (wasDisabled) $fb.turn("disable", true);
+    }
   }
+
   function navigate(delta) {
     if (state.mode === "flip" && $("#flipbook").turn("is")) {
-      if (!$("#flipbook").turn("animating")) $("#flipbook").turn(delta > 0 ? "next" : "previous");
-    } else goToPage(state.currentPage + delta, false);
+      const $fb = $("#flipbook");
+      if (!$fb.turn("animating")) {
+        const wasDisabled = $fb.turn("disabled");
+        if (wasDisabled) $fb.turn("disable", false);
+        $fb.turn(delta > 0 ? "next" : "previous");
+        if (wasDisabled) $fb.turn("disable", true);
+      }
+    } else {
+      goToPage(state.currentPage + delta);
+    }
   }
-  function physical(side) { navigate(side * (state.direction === "rtl" ? -1 : 1)); }
-  $("#zone-right").on("click", () => { if(state.zoom <= 1) physical(1); });
-  $("#zone-left").on("click", () => { if(state.zoom <= 1) physical(-1); });
-  $(document).on("keydown", e => {
-    if (e.key === "Escape") { toggleLibraryDrawer(false); setFocus(false); return; }
+
+  function physical(side) {
+    navigate(side * (state.direction === "rtl" ? -1 : 1));
+  }
+
+  $("#zone-right").on("click", () => physical(1));
+  $("#zone-left").on("click", () => physical(-1));
+
+  $(document).on("keydown", (e) => {
+    if (e.key === "Escape") {
+      toggleLibraryDrawer(false);
+      setFocus(false);
+      return;
+    }
     if ($(e.target).is("input, select, textarea, button") || !$("#library-drawer").hasClass("hidden")) return;
-    if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); physical(e.key === "ArrowRight" ? 1 : -1); }
-    if(e.key === " ") { e.preventDefault(); navigate(1); }
-    if(e.key.toLowerCase() === "f") setFocus(!document.body.classList.contains("focus-mode"));
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      physical(e.key === "ArrowRight" ? 1 : -1);
+    }
+    if (e.key === " ") {
+      e.preventDefault();
+      navigate(1);
+    }
+    if (e.key.toLowerCase() === "f") setFocus(!document.body.classList.contains("focus-mode"));
   });
 
-  // --- ZOOM & PAN ---
+  // --- ANCHORED ZOOM & BOUNDED PAN ---
+  function clampPan() {
+    if (state.zoom <= 1) {
+      state.panX = 0;
+      state.panY = 0;
+      return;
+    }
+    const stage = document.getElementById("book-stage");
+    const maxPanX = Math.max(0, (stage.offsetWidth * state.zoom - viewportEl.clientWidth) / 2 + 40);
+    const maxPanY = Math.max(0, (stage.offsetHeight * state.zoom - viewportEl.clientHeight) / 2 + 40);
+    state.panX = Math.max(-maxPanX, Math.min(maxPanX, state.panX));
+    state.panY = Math.max(-maxPanY, Math.min(maxPanY, state.panY));
+  }
+
   function applyTransform() {
-    if(state.mode !== "flip") { $("#pan-zoom-layer").css("transform", "none"); $("#scroll-reader").css("--reader-zoom", state.zoom); $("#zoom-level").text(`${Math.round(state.zoom*100)}%`); return; }
-    $("#pan-zoom-layer").css(
+    if (state.mode !== "flip") {
+      $("#pan-zoom-layer").css("transform", "none");
+      $("#scroll-reader").css("--reader-zoom", state.zoom);
+      $("#zoom-level").text(`${Math.round(state.zoom * 100)}%`);
+      return;
+    }
+
+    // Anchor at 1.0 minimum so book never shrinks away from center
+    state.zoom = Math.max(1, Math.min(4, state.zoom));
+    clampPan();
+
+    const $layer = $("#pan-zoom-layer");
+    // Disable CSS transition while actively dragging so pan tracks finger/mouse 1:1 without lag
+    $layer.css("transition", state.isDragging ? "none" : "transform 0.12s ease-out");
+    $layer.css(
       "transform",
-      `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`
+      `translate3d(${state.panX}px, ${state.panY}px, 0) scale(${state.zoom})`
     );
     $("#zoom-level").text(`${Math.round(state.zoom * 100)}%`);
+    $("#viewport").toggleClass("is-zoomed", state.zoom > 1);
+
+    // Prevent turn.js corner drag from fighting pan gestures when zoomed in
+    if ($("#flipbook").turn("is")) {
+      $("#flipbook").turn("disable", state.zoom > 1);
+    }
   }
 
   function resetTransform() {
     state.zoom = 1;
     state.panX = 0;
     state.panY = 0;
+    state.isDragging = false;
     applyTransform();
   }
 
@@ -518,11 +619,7 @@ $(document).ready(function () {
   });
 
   $("#zoom-out").on("click", () => {
-    state.zoom = Math.max(0.5, +(state.zoom - 0.25).toFixed(2));
-    if (state.zoom <= 1) {
-      state.panX = 0;
-      state.panY = 0;
-    }
+    state.zoom = Math.max(1, +(state.zoom - 0.25).toFixed(2));
     applyTransform();
   });
 
@@ -532,17 +629,13 @@ $(document).ready(function () {
     if (state.mode !== "flip" || !e.originalEvent.ctrlKey) return;
     e.preventDefault();
     const delta = e.originalEvent.deltaY < 0 ? 0.15 : -0.15;
-    state.zoom = Math.min(4, Math.max(0.5, +(state.zoom + delta).toFixed(2)));
-    if (state.zoom <= 1) {
-      state.panX = 0;
-      state.panY = 0;
-    }
+    state.zoom = Math.min(4, Math.max(1, +(state.zoom + delta).toFixed(2)));
     applyTransform();
   });
 
-  const viewportEl = document.getElementById("viewport");
   viewportEl.addEventListener("pointerdown", (e) => {
     if (state.zoom <= 1 || state.mode !== "flip") return;
+    if (e.target.closest(".nav-zone")) return;
     state.isDragging = true;
     state.startX = e.clientX - state.panX;
     state.startY = e.clientY - state.panY;
@@ -556,7 +649,10 @@ $(document).ready(function () {
   });
 
   window.addEventListener("pointerup", () => {
-    state.isDragging = false;
+    if (state.isDragging) {
+      state.isDragging = false;
+      applyTransform();
+    }
   });
 
   // --- CONTROLS ---
@@ -579,13 +675,15 @@ $(document).ready(function () {
   });
 
   $("#spread-btn").on("click", function () {
+    state.userOverrodeSpread = true;
     state.display = state.display === "double" ? "single" : "double";
+    resetTransform();
     renderAll();
   });
 
-  $("#jump-btn").on("click", () => goToPage($("#page-input").val(), true));
+  $("#jump-btn").on("click", () => goToPage($("#page-input").val()));
   $("#page-input").on("keypress", (e) => {
-    if (e.key === "Enter") goToPage($("#page-input").val(), true);
+    if (e.key === "Enter") goToPage($("#page-input").val());
   });
 
   $("#book-style-select").on("change", function () {
@@ -609,36 +707,213 @@ $(document).ready(function () {
     $(this).text(isDark ? "☀️" : "🌙");
   });
 
-  $(window).on("resize", () => {
-    if (state.mode === "flip" && $("#flipbook").turn("is")) {
-      const dims = calculateBookDimensions();
-      $("#flipbook").turn("size", dims.width, dims.height);
+  // --- AUTOMATIC DEVICE & VIEWPORT ADAPTATION ---
+  function handleResponsiveAdaptation() {
+    const recommended = getRecommendedDisplay();
+    if (!state.userOverrodeSpread && state.display !== recommended) {
+      state.display = recommended;
+      resetTransform();
+      renderAll();
+    } else {
+      resizeBook();
+    }
+  }
+
+  let resizeTimer;
+  $(window).on("resize orientationchange", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(handleResponsiveAdaptation, 80);
+  });
+
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => resizeBook()).observe(viewportEl);
+  }
+
+  function updateProgress() {
+    const total = state.pages.length || 1;
+    $("#reading-progress").text(
+      `${state.currentPage} / ${total} · ${Math.round((state.currentPage / total) * 100)}%`
+    );
+    $("#scrub").attr("max", total).val(state.currentPage);
+    $("#bookmark-btn").text(getMarks().includes(state.currentPage) ? "★ Marked" : "☆ Mark");
+  }
+
+  function getMarks() {
+    try {
+      return JSON.parse(localStorage.getItem("mv-marks-" + (state.bookId || "demo")) || "[]");
+    } catch {
+      return [];
+    }
+  }
+
+  function setFocus(on) {
+    document.body.classList.toggle("focus-mode", on);
+    $("#exit-focus").toggleClass("hidden", !on);
+    requestAnimationFrame(resizeBook);
+  }
+
+  $("#focus-btn").on("click", () => setFocus(true));
+  $("#exit-focus").on("click", () => setFocus(false));
+  $("#settings-btn").on("click", () => {
+    document.body.classList.toggle("show-settings");
+    requestAnimationFrame(resizeBook);
+  });
+  $("#thumb-toggle").on("click", () => {
+    $(".thumbnail-dock").toggleClass("hidden");
+    requestAnimationFrame(resizeBook);
+  });
+  $("#prev-btn").on("click", () => navigate(-1));
+  $("#next-btn").on("click", () => navigate(1));
+  $("#scrub").on("change", function () {
+    goToPage(this.value);
+  });
+  $("#fullscreen-btn").on("click", async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch {
+      setFocus(true);
+    }
+  });
+  $("#bookmark-btn").on("click", () => {
+    let m = getMarks();
+    m = m.includes(state.currentPage)
+      ? m.filter((x) => x !== state.currentPage)
+      : [...m, state.currentPage];
+    try {
+      localStorage.setItem("mv-marks-" + (state.bookId || "demo"), JSON.stringify(m));
+      updateProgress();
+    } catch {
+      alert("Bookmark storage unavailable");
+    }
+  });
+  $("#marks-btn").on("click", () => {
+    const m = getMarks().sort((a, b) => a - b);
+    if (!m.length) return alert("No bookmarks yet.");
+    const d = document.createElement("dialog");
+    const title = document.createElement("h2");
+    title.textContent = "Bookmarks";
+    d.append(title);
+    m.forEach((n) => {
+      const b = document.createElement("button");
+      b.className = "btn";
+      b.textContent = "Page " + n;
+      b.onclick = () => {
+        goToPage(n);
+        d.close();
+      };
+      d.append(b);
+    });
+    const close = document.createElement("button");
+    close.className = "btn";
+    close.textContent = "Close";
+    close.onclick = () => d.close();
+    d.append(close);
+    d.onclose = () => d.remove();
+    document.body.append(d);
+    d.showModal();
+  });
+
+  let scrollTimer;
+  $("#scroll-reader").on("scroll", function () {
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => {
+      if (state.mode === "flip") return;
+      const r = this.getBoundingClientRect();
+      let best = null,
+        dist = Infinity;
+      for (const img of this.querySelectorAll("img")) {
+        const b = img.getBoundingClientRect();
+        const d =
+          state.mode === "horizontal"
+            ? Math.abs((b.left + b.right - r.left - r.right) / 2)
+            : Math.abs((b.top + b.bottom - r.top - r.bottom) / 2);
+        if (d < dist) {
+          dist = d;
+          best = img;
+        }
+      }
+      if (best) {
+        state.currentPage = Number(best.dataset.page);
+        $("#page-input").val(state.currentPage);
+        highlightThumbnail(state.currentPage);
+        saveCurrentProgress();
+      }
+    }, 180);
+  });
+
+  let touchStart = null,
+    pinch = null;
+  viewportEl.addEventListener(
+    "touchstart",
+    (e) => {
+      if (state.mode !== "flip") return;
+      if (e.touches.length === 2) {
+        pinch = {
+          distance: Math.hypot(
+            e.touches[0].clientX - e.touches[1].clientX,
+            e.touches[0].clientY - e.touches[1].clientY
+          ),
+          zoom: state.zoom,
+        };
+        touchStart = null;
+      } else if (e.touches.length === 1) {
+        touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      }
+    },
+    { passive: true }
+  );
+
+  viewportEl.addEventListener(
+    "touchmove",
+    (e) => {
+      if (pinch && e.touches.length === 2) {
+        e.preventDefault();
+        state.zoom = Math.max(
+          1,
+          Math.min(
+            4,
+            (pinch.zoom *
+              Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+              )) /
+              Math.max(1, pinch.distance)
+          )
+        );
+        applyTransform();
+      }
+    },
+    { passive: false }
+  );
+
+  viewportEl.addEventListener("touchend", (e) => {
+    if (pinch) {
+      if (!e.touches.length) pinch = null;
+      return;
+    }
+    if (
+      touchStart &&
+      state.zoom <= 1 &&
+      e.changedTouches.length &&
+      !e.target.closest(".flipbook")
+    ) {
+      const dx = e.changedTouches[0].clientX - touchStart.x,
+        dy = e.changedTouches[0].clientY - touchStart.y;
+      if (Math.abs(dx) > 65 && Math.abs(dx) > Math.abs(dy) * 1.5) physical(dx < 0 ? 1 : -1);
+    }
+    touchStart = null;
+  });
+
+  $("#viewport").on("dblclick", (e) => {
+    if (e.target.closest(".nav-zone")) return;
+    if (state.zoom > 1) resetTransform();
+    else {
+      state.zoom = 2;
+      applyTransform();
     }
   });
 
-  function updateProgress(){
-    const total=state.pages.length || 1;
-    $("#reading-progress").text(`${state.currentPage} / ${total} · ${Math.round(state.currentPage/total*100)}%`);
-    $("#scrub").attr("max",total).val(state.currentPage);
-    $("#bookmark-btn").text(getMarks().includes(state.currentPage)?"★ Marked":"☆ Mark");
-  }
-  function getMarks(){try{return JSON.parse(localStorage.getItem("mv-marks-"+(state.bookId||"demo"))||"[]");}catch{return [];}}
-  function resizeBook(){if(state.mode === "flip" && $("#flipbook").turn("is")){const d=calculateBookDimensions();$("#flipbook").turn("size",d.width,d.height);}}
-  function setFocus(on){document.body.classList.toggle("focus-mode",on);$("#exit-focus").toggleClass("hidden",!on);requestAnimationFrame(resizeBook);}
-  $("#focus-btn").on("click",()=>setFocus(true)); $("#exit-focus").on("click",()=>setFocus(false));
-  $("#settings-btn").on("click",()=>{document.body.classList.toggle("show-settings");requestAnimationFrame(resizeBook);});
-  $("#thumb-toggle").on("click",()=>{$(".thumbnail-dock").toggleClass("hidden");requestAnimationFrame(resizeBook);});
-  $("#prev-btn").on("click",()=>navigate(-1)); $("#next-btn").on("click",()=>navigate(1));
-  $("#scrub").on("change",function(){goToPage(this.value,false);});
-  $("#fullscreen-btn").on("click",async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch{setFocus(true);}});
-  $("#bookmark-btn").on("click",()=>{let m=getMarks();m=m.includes(state.currentPage)?m.filter(x=>x!==state.currentPage):[...m,state.currentPage];try{localStorage.setItem("mv-marks-"+(state.bookId||"demo"),JSON.stringify(m));updateProgress();}catch{alert("Bookmark storage unavailable");}});
-  $("#marks-btn").on("click",()=>{const m=getMarks().sort((a,b)=>a-b);if(!m.length)return alert("No bookmarks yet.");const d=document.createElement("dialog");const title=document.createElement("h2");title.textContent="Bookmarks";d.append(title);m.forEach(n=>{const b=document.createElement("button");b.className="btn";b.textContent="Page "+n;b.onclick=()=>{goToPage(n,false);d.close();};d.append(b);});const close=document.createElement("button");close.className="btn";close.textContent="Close";close.onclick=()=>d.close();d.append(close);d.onclose=()=>d.remove();document.body.append(d);d.showModal();});
-  let scrollTimer; $("#scroll-reader").on("scroll",function(){clearTimeout(scrollTimer);scrollTimer=setTimeout(()=>{if(state.mode==="flip")return;const r=this.getBoundingClientRect();let best=null,dist=Infinity;for(const img of this.querySelectorAll("img")){const b=img.getBoundingClientRect();const d=state.mode==="horizontal"?Math.abs((b.left+b.right-r.left-r.right)/2):Math.abs((b.top+b.bottom-r.top-r.bottom)/2);if(d<dist){dist=d;best=img;}}if(best){state.currentPage=Number(best.dataset.page);$("#page-input").val(state.currentPage);highlightThumbnail(state.currentPage);saveCurrentProgress();}},180);});
-  let touchStart=null, pinch=null;
-  viewportEl.addEventListener("touchstart",e=>{if(state.mode!=="flip")return;if(e.touches.length===2){pinch={distance:Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY),zoom:state.zoom};touchStart=null;}else if(e.touches.length===1)touchStart={x:e.touches[0].clientX,y:e.touches[0].clientY};},{passive:true});
-  viewportEl.addEventListener("touchmove",e=>{if(pinch&&e.touches.length===2){e.preventDefault();state.zoom=Math.max(1,Math.min(4,pinch.zoom*Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY)/Math.max(1,pinch.distance)));applyTransform();}},{passive:false});
-  viewportEl.addEventListener("touchend",e=>{if(pinch){if(!e.touches.length)pinch=null;return;}if(touchStart&&state.zoom<=1&&e.changedTouches.length&& !e.target.closest(".flipbook")){const dx=e.changedTouches[0].clientX-touchStart.x,dy=e.changedTouches[0].clientY-touchStart.y;if(Math.abs(dx)>65&&Math.abs(dx)>Math.abs(dy)*1.5)physical(dx<0?1:-1);}touchStart=null;});
-  $("#viewport").on("dblclick",()=>{if(state.zoom>1)resetTransform();else{state.zoom=2;applyTransform();}});
   // --- BOOTSTRAP ---
   openDB()
     .then(async () => {
