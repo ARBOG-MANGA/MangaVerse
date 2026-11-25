@@ -570,6 +570,37 @@ body {
   .nav-zone {
     width: 18%;
   }
+}
+/* Anchoring & Zoom Cursor Feedback */
+.book-stage {
+  margin: 0 auto;
+  flex-shrink: 0;
+}
+
+.flipbook {
+  margin-left: 0 !important;
+}
+
+.viewport.is-zoomed {
+  cursor: grab;
+}
+
+.viewport.is-zoomed:active {
+  cursor: grabbing;
+}
+
+/* Tablet Breakpoint (769px - 1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .toolbar {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+  .status-text {
+    max-width: 110px;
+  }
+  .nav-zone {
+    width: 10%;
+  }
 }/* MangaVerse interface */
 :root{--accent:#a78bfa;--bg-app:#101014;--bg-bar:#19191f;--bg-card:#22222b;--border-color:#ffffff19} [data-theme="light"]{--accent:#7354c4}
 .brand{font-size:19px;font-weight:900;letter-spacing:-1px;line-height:1;white-space:nowrap}.brand span{color:var(--accent)}.brand small{display:block;font-size:8px;letter-spacing:2px;color:var(--text-muted);margin-top:5px}.toolbar{justify-content:flex-start;gap:10px;padding:10px 14px}.toolbar-group{flex-wrap:wrap}.btn,select,input[type=number]{min-height:34px;border-radius:9px}.primary-btn{color:#14111d}.settings-group{display:none}.show-settings .settings-group{display:flex;order:10;width:100%;padding-top:8px;border-top:1px solid var(--border-color)}.quick{margin-left:auto}.reader-bar{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--bg-bar);border-top:1px solid var(--border-color);z-index:120}.reader-bar input{flex:1;min-width:30px;accent-color:var(--accent)}#reading-progress{font-size:12px;white-space:nowrap;color:var(--text-muted)}.thumbnail-dock{height:76px}.thumb-slide:hover{transform:translateY(-2px) scale(1.08)}.thumb-slide.active{border-color:var(--accent)}.library-drawer{top:0;padding:24px}.library-header{position:sticky;top:0;background:var(--bg-app);z-index:2}.manga-card{border-radius:14px}.viewport{min-height:0}.pan-zoom-layer:has(.scroll-reader:not(.hidden)){width:100%;height:100%}.scroll-reader{height:100%;width:100%;align-items:center}.scroll-reader img{flex-shrink:0;width:calc(min(850px, 96vw) * var(--reader-zoom,1));max-width:none;height:auto}.scroll-reader.horizontal img{height:calc(92% * var(--reader-zoom,1));width:auto}.scroll-reader.horizontal{align-items:center}.viewport:has(.book-stage:not(.hidden)){touch-action:none}.focus-mode .toolbar,.focus-mode .reader-bar,.focus-mode .thumbnail-dock{display:none}.focus-mode #exit-focus{position:fixed;top:10px;right:10px;z-index:300;opacity:.65}dialog{margin:auto;background:var(--bg-card);color:var(--text-main);border:1px solid var(--border-color);border-radius:16px;padding:22px;max-width:90vw}dialog button{margin:5px}dialog::backdrop{background:#0009}.nav-zone{width:7%}.btn:focus-visible,select:focus-visible{outline:2px solid var(--accent)}
